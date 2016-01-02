@@ -10,9 +10,64 @@ start:
   call check_cpuid
   call check_long_mode
 
+  call setup_page_tables
+  call enable_paging
+
   ; print 'OK' to screen
   mov dword [0xb8000], 0x2f4b2f4f
   hlt
+
+; create page tables and ensure entries are mapped
+setup_page_tables:
+  ; map first p4 to p3
+  mov eax, p3_table
+  or eax, 0b11  ; present, writeable
+  mov [p4_table], eax
+
+  ; map first p3 to p2
+  mov eax, p2_table
+  or eax, 0b11  ; present, writeable
+  mov [p3_table], eax
+
+  ; map p2 entries to 2MiB pages
+  mov ecx, 0
+
+.map_p2_table:
+  ; map ecx-th p2 entry to a huge page at 2MiB * ecx
+  mov eax, 0x200000
+  mul ecx
+  or eax, 0b10000011  ; present, writeable, huge
+  mov [p2_table + ecx * 8], eax
+
+  inc ecx
+  cmp ecx, 512
+  jne .map_p2_table
+
+  ret
+
+; enable paging
+enable_paging:
+  ; load p4 to cr3
+  mov eax, p4_table
+  mov cr3, eax
+
+  ; enable PAE flag in cr4
+  mov eax, cr4
+  or eax, 1 << 5
+  mov cr4, eax
+
+  ; set long mode bit in EFER MSR
+  mov ecx, 0xC0000080
+  rdmsr
+  or eax, 1 << 8
+  wrmsr
+
+  ; enable paging in cr0
+  mov eax, cr0
+  or eax, 1 << 31
+  mov cr0, eax
+
+  ret
 
 ; print 'ERR: ' + error code in al.
 error:
@@ -67,6 +122,13 @@ check_long_mode:
 
 
 section .bss
+align 4096
+p4_table:
+  resb 4096
+p3_table:
+  resb 4096
+p2_table:
+  resb 4096
 stack_bottom:
   resb 64
 stack_top:
